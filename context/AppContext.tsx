@@ -1,0 +1,173 @@
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { User as FirebaseUser } from 'firebase/auth';
+import { doc, getDoc, setDoc, onSnapshot, Timestamp, runTransaction, updateDoc, collection, query, where, limit } from 'firebase/firestore';
+import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '../firebase';
+import { User, Booking, BookingStatus } from '../types';
+
+interface AppContextType {
+  user: User | null;
+  booking: Booking | null;
+  loading: boolean;
+  login: () => void;
+  logout: () => void;
+  bookSlot: (slotTime: Date) => Promise<void>;
+  setReady: () => Promise<void>;
+  addStars: (amount: number) => Promise<void>;
+  clearMatchResult: () => Promise<void>;
+}
+
+const AppContext = createContext<AppContextType | undefined>(undefined);
+
+export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [booking, setBooking] = useState<Booking | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const userRef = doc(db, 'users', firebaseUser.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+          setUser(userSnap.data() as User);
+        } else {
+          // Create a new user profile in Firestore
+          const newUser: User = {
+            uid: firebaseUser.uid,
+            name: firebaseUser.displayName,
+            email: firebaseUser.email,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            stars: 5,
+            lastStarRefresh: Timestamp.now(),
+            referralCode: `REF-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+          };
+          await setDoc(userRef, newUser);
+          setUser(newUser);
+        }
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setBooking(null);
+      return;
+    }
+
+    // Listen for active bookings
+    const bookingsRef = collection(db, 'bookings');
+    const q = query(
+      bookingsRef,
+      where('userId', '==', user.uid),
+      where('status', 'in', [
+        BookingStatus.BOOKED,
+        BookingStatus.WAITING_MATCH,
+        BookingStatus.MATCHED,
+        BookingStatus.NO_MATCH,
+        BookingStatus.NO_SHOW,
+      ]),
+      limit(1)
+    );
+
+    const unsubscribeBookings = onSnapshot(q, (snapshot) => {
+      if (!snapshot.empty) {
+        const bookingDoc = snapshot.docs[0];
+        setBooking({ bookingId: bookingDoc.id, ...bookingDoc.data() } as Booking);
+      } else {
+        setBooking(null);
+      }
+    });
+
+    return () => unsubscribeBookings();
+  }, [user]);
+
+  const login = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Error during sign-in:", error);
+    }
+  };
+
+  const logout = async () => {
+    await signOut(auth);
+  };
+
+  const addStars = async (amount: number) => {
+    if (user) {
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, {
+        stars: user.stars + amount
+      });
+      setUser(prevUser => prevUser ? { ...prevUser, stars: prevUser.stars + amount } : null);
+    }
+  };
+
+  const bookSlot = async (slotTime: Date) => {
+    if (!user || user.stars <= 0) {
+      alert("You don't have enough stars to book a slot.");
+      return;
+    }
+    try {
+      await runTransaction(db, async (transaction) => {
+        const userRef = doc(db, 'users', user.uid);
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists() || userDoc.data().stars < 1) {
+          throw new Error("Insufficient stars!");
+        }
+
+        const newStars = userDoc.data().stars - 1;
+        transaction.update(userRef, { stars: newStars });
+
+        const newBookingRef = doc(collection(db, 'bookings'));
+        transaction.set(newBookingRef, {
+          userId: user.uid,
+          slotTime: Timestamp.fromDate(slotTime),
+          status: BookingStatus.BOOKED,
+          timezone: user.timezone,
+        });
+      });
+    } catch (error) {
+      console.error("Booking transaction failed: ", error);
+      alert("Failed to book slot. Please try again.");
+    }
+  };
+
+  const setReady = async () => {
+    if (booking) {
+      const bookingRef = doc(db, 'bookings', booking.bookingId);
+      await updateDoc(bookingRef, { status: BookingStatus.WAITING_MATCH });
+    }
+  };
+
+  const clearMatchResult = async () => {
+    if (booking) {
+      const bookingRef = doc(db, 'bookings', booking.bookingId);
+      // Instead of deleting, we update the status to a terminal state.
+      // A Cloud Function could later clean these up.
+      await updateDoc(bookingRef, { status: BookingStatus.IDLE });
+    }
+  };
+
+  return (
+    <AppContext.Provider value={{ user, booking, loading, login, logout, bookSlot, setReady, addStars, clearMatchResult }}>
+      {!loading && children}
+    </AppContext.Provider>
+  );
+};
+
+export const useAppContext = (): AppContextType => {
+  const context = useContext(AppContext);
+  if (context === undefined) {
+    throw new Error('useAppContext must be used within an AppProvider');
+  }
+  return context;
+};

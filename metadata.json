@@ -1,0 +1,5 @@
+{
+  "name": "PeerPrep",
+  "description": "A peer-to-peer mock interview platform where users can book 30-minute slots to practice with others. It uses a 'Star' system for booking and simulates matching users for Google Meet interviews.",
+  "requestFramePermissions": []
+}
