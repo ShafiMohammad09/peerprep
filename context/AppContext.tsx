@@ -15,6 +15,8 @@ interface AppContextType {
   setReady: () => Promise<void>;
   addStars: (amount: number) => Promise<void>;
   clearMatchResult: () => Promise<void>;
+  cancelMatch: () => Promise<void>;
+  quickMatch: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -222,8 +224,83 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const cancelMatch = async () => {
+    if (!booking || !user) return;
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const bookingRef = doc(db, 'bookings', booking.bookingId);
+        const userRef = doc(db, 'users', user.uid);
+        
+        // Re-read both documents inside the transaction
+        const bookingDoc = await transaction.get(bookingRef);
+        const userDoc = await transaction.get(userRef);
+        
+        if (!bookingDoc.exists()) {
+          throw new Error("Booking not found");
+        }
+        
+        const bookingData = bookingDoc.data();
+        
+        // Only allow canceling if still waiting for a match
+        if (bookingData?.status !== BookingStatus.WAITING_MATCH) {
+          throw new Error("Cannot cancel - booking is no longer waiting for a match");
+        }
+        
+        if (!userDoc.exists()) {
+          throw new Error("User not found");
+        }
+        
+        // Get the actual current star count from the database
+        const currentStars = userDoc.data()?.stars || 0;
+        
+        // Refund the star and cancel the booking
+        transaction.update(bookingRef, { status: BookingStatus.IDLE });
+        transaction.update(userRef, { stars: currentStars + 1 });
+      });
+      
+      console.log("Match cancelled successfully");
+    } catch (error: any) {
+      console.error("Error cancelling match:", error);
+      alert(error.message || "Failed to cancel match. Please try again.");
+    }
+  };
+
+  const quickMatch = async () => {
+    if (!user || user.stars <= 0) {
+      alert("You don't have enough stars to find a match.");
+      return;
+    }
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const userRef = doc(db, 'users', user.uid);
+        const userDoc = await transaction.get(userRef);
+        if (!userDoc.exists() || userDoc.data().stars < 1) {
+          throw new Error("Insufficient stars!");
+        }
+
+        const newStars = userDoc.data().stars - 1;
+        transaction.update(userRef, { stars: newStars });
+
+        // Create a booking with current time (for testing)
+        const now = new Date();
+        const newBookingRef = doc(collection(db, 'bookings'));
+        transaction.set(newBookingRef, {
+          userId: user.uid,
+          slotTime: Timestamp.fromDate(now),
+          status: BookingStatus.WAITING_MATCH,
+          timezone: user.timezone,
+        });
+      });
+    } catch (error) {
+      console.error("Quick match transaction failed: ", error);
+      alert("Failed to start quick match. Please try again.");
+    }
+  };
+
   return (
-    <AppContext.Provider value={{ user, booking, loading, login, logout, bookSlot, setReady, addStars, clearMatchResult }}>
+    <AppContext.Provider value={{ user, booking, loading, login, logout, bookSlot, setReady, addStars, clearMatchResult, cancelMatch, quickMatch }}>
       {!loading && children}
     </AppContext.Provider>
   );

@@ -39,7 +39,7 @@ const Header: React.FC = () => {
 
 
 const SlotList: React.FC = () => {
-    const { bookSlot, user } = useAppContext();
+    const { bookSlot, user, quickMatch } = useAppContext();
     const [timeSlots] = useState<Date[]>(generateTimeSlots());
     const now = new Date();
 
@@ -53,6 +53,17 @@ const SlotList: React.FC = () => {
 
     return (
         <div className="p-4 sm:p-8">
+            <div className="max-w-4xl mx-auto mb-8 bg-gradient-to-r from-purple-500 to-indigo-600 rounded-xl shadow-lg p-6 text-white">
+                <h3 className="text-2xl font-bold mb-3">🚀 Quick Test Mode</h3>
+                <p className="mb-4 opacity-90">Skip the waiting! Click below to find a partner instantly for testing.</p>
+                <button 
+                    onClick={quickMatch}
+                    disabled={!user || user.stars <= 0}
+                    className="bg-white text-indigo-600 font-bold py-3 px-8 rounded-lg hover:bg-indigo-50 transition-colors disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+                >
+                    Find Partner Right Away (1 ⭐)
+                </button>
+            </div>
             <h2 className="text-2xl font-bold mb-4">Book a Slot</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                 {timeSlots.map((slot, index) => {
@@ -77,7 +88,7 @@ const SlotList: React.FC = () => {
 };
 
 const BookingStatusDisplay: React.FC<{ booking: Booking }> = ({ booking }) => {
-    const { setReady, clearMatchResult } = useAppContext();
+    const { setReady, clearMatchResult, cancelMatch } = useAppContext();
     const [countdown, setCountdown] = useState('');
     const [showReadyButton, setShowReadyButton] = useState(false);
     const bookingTime = booking.slotTime.toDate(); // Convert Firestore Timestamp to JS Date
@@ -130,6 +141,12 @@ const BookingStatusDisplay: React.FC<{ booking: Booking }> = ({ booking }) => {
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
                             <p className="mt-4 text-lg font-semibold">Waiting for a match...</p>
                             <p className="text-slate-500">This may take a moment. We're finding a peer for you.</p>
+                            <button 
+                                onClick={cancelMatch} 
+                                className="mt-6 bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
+                            >
+                                Cancel & Refund Star
+                            </button>
                         </div>
                     </div>
                 );
