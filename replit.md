@@ -15,6 +15,7 @@ The application has been successfully configured to run in the Replit environmen
 ## Recent Changes (October 18, 2025)
 - Installed Node.js dependencies
 - Updated Vite config to use port 5000 (required for Replit)
+- Configured `allowedHosts: true` to support Replit's dynamic proxy domains
 - Configured HMR (Hot Module Reload) for proper proxy support
 - Updated Firebase configuration to support environment variables with fallbacks
 - Set up dev workflow for frontend server
@@ -34,7 +35,7 @@ The application has been successfully configured to run in the Replit environmen
 - `/functions/src/index.ts` - Cloud Functions implementation
 
 ### Configuration Files
-- `vite.config.ts` - Vite configuration (port 5000, HMR, environment variables)
+- `vite.config.ts` - Vite configuration (port 5000, allowedHosts for Replit proxy, HMR, environment variables)
 - `tsconfig.json` - TypeScript configuration
 - `firestore.rules` - Firestore security rules
 
