@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot, Timestamp, runTransaction, updateDoc, collection, query, where, limit } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot, Timestamp, runTransaction, updateDoc, collection, query, where, limit, getDocs } from 'firebase/firestore';
 import { GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { User, Booking, BookingStatus } from '../types';
@@ -142,9 +142,74 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const setReady = async () => {
-    if (booking) {
+    if (!booking || !user) return;
+    
+    try {
       const bookingRef = doc(db, 'bookings', booking.bookingId);
+      
+      // First, set our status to waiting_match
       await updateDoc(bookingRef, { status: BookingStatus.WAITING_MATCH });
+      
+      // Then immediately try to find a match
+      await runTransaction(db, async (transaction) => {
+        // Re-fetch our booking to ensure it's still valid
+        const myBookingDoc = await transaction.get(bookingRef);
+        if (!myBookingDoc.exists() || myBookingDoc.data()?.status !== BookingStatus.WAITING_MATCH) {
+          return; // Already matched or invalid
+        }
+        
+        const myData = myBookingDoc.data();
+        
+        // Query for ALL users waiting in the same slot (without != operator)
+        const waitingPeersQuery = query(
+          collection(db, 'bookings'),
+          where('slotTime', '==', myData.slotTime),
+          where('status', '==', BookingStatus.WAITING_MATCH)
+        );
+        
+        const querySnapshot = await getDocs(waitingPeersQuery);
+        
+        // Filter out our own booking and users with the same userId
+        const availablePeers = querySnapshot.docs.filter(
+          d => d.id !== booking.bookingId && d.data().userId !== user.uid
+        );
+        
+        if (availablePeers.length === 0) {
+          // No match found yet, stay in waiting state
+          console.log("No peers available for matching");
+          return;
+        }
+        
+        const peerDoc = availablePeers[0];
+        const peerRef = doc(db, 'bookings', peerDoc.id);
+        
+        // Verify peer is still waiting within the transaction
+        const peerSnapshot = await transaction.get(peerRef);
+        if (!peerSnapshot.exists() || peerSnapshot.data()?.status !== BookingStatus.WAITING_MATCH) {
+          console.log("Peer no longer available");
+          return; // Peer no longer available
+        }
+        
+        // Create match
+        const matchId = doc(collection(db, 'matches')).id;
+        const meetLink = `https://meet.google.com/${matchId}`;
+        
+        console.log(`Creating match ${matchId} between ${booking.bookingId} and ${peerDoc.id}`);
+        
+        transaction.update(bookingRef, { 
+          status: BookingStatus.MATCHED, 
+          matchId, 
+          meetLink 
+        });
+        transaction.update(peerRef, { 
+          status: BookingStatus.MATCHED, 
+          matchId, 
+          meetLink 
+        });
+      });
+    } catch (error) {
+      console.error("Error in setReady:", error);
+      alert("Failed to find match. Please try again.");
     }
   };
 
